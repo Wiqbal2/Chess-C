@@ -1,23 +1,41 @@
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/fs.h>
+#include <linux/cdev.h>
+#include <linux/device.h>
+#include <linux/uaccess.h>
+#include <linux/slab.h>
+
 #define BOARD_SIZE 8
+
+typedef enum {
+    STATE_UNINITIALIZED,
+    STATE_RUNNING,
+    STATE_NO_GAME
+} GameState;
+
+typedef struct {
+    char board[BOARD_SIZE][BOARD_SIZE][3];
+    char current_player;
+    GameState state;
+} ChessGame;
 
 // board size 8x8 and 3 for the W or B and piece as well as null term
 void initialize_board(char board[BOARD_SIZE][BOARD_SIZE][3]) {
     // put * in the middle 4 rows
-    for (int i = 2; i < 6; i++) {
-        for (int j = 0; j < BOARD_SIZE; j++) {
+    int i = 0;
+    int j = 0;
+    for ( i = 2; i < 6; i++) {
+        for ( j = 0; j < BOARD_SIZE; j++) {
             board[i][j][0] = '*';
             board[i][j][1] = '*';
             board[i][j][2] = '\0';
         }
     }
-     // put all the specialty pieces in the back in their correct order
+    // put all the specialty pieces in the back in their correct order
     char pieces[] = {'R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'};
-    for (int j = 0; j < BOARD_SIZE; j++) {
+    for ( j = 0; j < BOARD_SIZE; j++) {
         board[0][j][0] = 'W';
         board[0][j][1] = pieces[j];
         board[0][j][2] = '\0';
@@ -25,9 +43,8 @@ void initialize_board(char board[BOARD_SIZE][BOARD_SIZE][3]) {
         board[7][j][1] = pieces[j];
         board[7][j][2] = '\0';
     }
-
     // put pawns
-    for (int j = 0; j < BOARD_SIZE; j++) {
+    for ( j = 0; j < BOARD_SIZE; j++) {
         board[1][j][0] = 'W';
         board[1][j][1] = 'P';
         board[1][j][2] = '\0';
@@ -35,44 +52,68 @@ void initialize_board(char board[BOARD_SIZE][BOARD_SIZE][3]) {
         board[6][j][1] = 'P';
         board[6][j][2] = '\0';
     }
-
-   
 }
 
 
 void print_board(char board[BOARD_SIZE][BOARD_SIZE][3]) {
-    printf("  a  b  c  d  e  f  g  h\n");
-    for (int i = 7; i >= 0; i--) {
-        printf("%d ", i + 1);
-        for (int j = 0; j < BOARD_SIZE; j++) {
-            printf("%s ", board[i][j]);
+    int i = 0;
+    int j = 0;
+    // print letters and numbers to its own row/col
+    printk(KERN_INFO "  a  b  c  d  e  f  g  h\n");
+    for ( i = BOARD_SIZE - 1; i >= 0; i--) {
+        printk(KERN_INFO "%d ", i + 1);
+        for ( j = 0; j < BOARD_SIZE; j++) {
+            printk(KERN_CONT "%s ", board[i][j]);
         }
-        printf("\n");
+        printk(KERN_CONT "\n");
     }
 }
 
-int move_pawn(char board[BOARD_SIZE][BOARD_SIZE][3], char color, int from_x, int from_y, int to_x, int to_y, int capture_bool) {
-    // check if user move is trying to go vertical 
-    if (from_x == to_x) {
-        int step;
-        int start_row;
-        if (color == 'W') {
-            // moves up the board if white piece 
-            step = 1;
-            // Pawns start 1 row past the bottom 
-            start_row = 1; 
-        } else {
-            //black moves down the board 
-            step = -1; 
-            // Pawns start one row below the very top
-            start_row = 6; 
-        }
+// initialize game and print the board
+void initialize_game(ChessGame *game, char player) {
+    initialize_board(game->board);
+    game->current_player = player;
+    game->state = STATE_RUNNING;
+    printk(KERN_INFO "New game started. Player %c begins.\n", player);
+    print_board(game->board);
+}
 
-        int distance = abs(to_y - from_y);
-        // check if destination is empty
-        if (board[to_y][to_x][0] == '*') { 
-            if (distance == 1) {
-                // Move pawn forward by one square
+// check if user move is trying to go vertical 
+int move_pawn(char board[BOARD_SIZE][BOARD_SIZE][3], char color, int from_x, int from_y, int to_x, int to_y, int capture_bool) {
+    int step;
+    int start_row;
+    if (color == 'W') {
+        // moves up the board if white piece 
+        step = 1;
+        // pawns start 1 row past the bottom 
+        start_row = 1; 
+    } else {
+        // black moves down the board 
+        step = -1;
+        // pawns start one row below the very top
+        start_row = 6;
+    }
+
+    int distance = abs(to_y - from_y);
+    // check if destination is empty
+    if (board[to_y][to_x][0] == '*') {
+        if (distance == 1) {
+            // move pawn forward by one square
+            board[to_y][to_x][0] = color;
+            board[to_y][to_x][1] = 'P';
+            board[to_y][to_x][2] = '\0';
+            board[from_y][from_x][0] = '*';
+            board[from_y][from_x][1] = '*';
+            board[from_y][from_x][2] = '\0';
+            return 0;
+
+        }             
+        // check if the intial 2 step move is starting from position at  start of the game
+        else if (distance == 2 && from_y == start_row) {
+            // check if there is no pieces in the two postions infront of each pawn
+
+            if (board[from_y + step][from_x][0] == '*' && board[to_y][to_x][0] == '*') {
+                // move pawn forward by two squares
                 board[to_y][to_x][0] = color;
                 board[to_y][to_x][1] = 'P';
                 board[to_y][to_x][2] = '\0';
@@ -80,186 +121,391 @@ int move_pawn(char board[BOARD_SIZE][BOARD_SIZE][3], char color, int from_x, int
                 board[from_y][from_x][1] = '*';
                 board[from_y][from_x][2] = '\0';
                 return 0;
-
-            } 
-            // check if the intial 2 step move is starting from position at  start of the game
-            else if (distance == 2 && from_y == start_row) {
-                // check if there is no pieces in the two postions infront of each pawn
-                if (board[from_y + step][from_x][0] == '*' && board[to_y][to_x][0] == '*') {
-                    // Move pawn forward by two squares
-                    board[to_y][to_x][0] = color;
-                    board[to_y][to_x][1] = 'P';
-                    board[to_y][to_x][2] = '\0';
-                    board[from_y][from_x][0] = '*';
-                    board[from_y][from_x][1] = '*';
-                    board[from_y][from_x][2] = '\0';
-                    return 0;
-                } else {
-                    return -1;  // Path is blocked, cannot move two squares
-                }
+            } else {
+                return -1; // path is blocked, cannot move two squares
             }
         }
-    }
-    // check for diagonal capture
-    //from x and to x must have a different of show for diagnoal and y can only have a difference of 1
-     else if (capture_bool && (abs(from_x - to_x) == 1 && abs(from_y - to_y) == 1)) {  
+        // check for diagonal capture
+        //from x and to x must have a different of show for diagnoal and y can only have a difference of 1
+    } else if (capture_bool && (abs(from_x - to_x) == 1 && abs(from_y - to_y) == 1)) {
         if (board[to_y][to_x][0] != '*' && board[to_y][to_x][0] != color) {
-            // Capture the piece
+            // capture the piece
             board[to_y][to_x][0] = color;
             board[to_y][to_x][1] = 'P';
             board[to_y][to_x][2] = '\0';
             board[from_y][from_x][0] = '*';
             board[from_y][from_x][1] = '*';
             board[from_y][from_x][2] = '\0';
-            //print captured piece
-            printf("Captured: %s\n", board[to_y][to_x]);  
-
+            printk(KERN_INFO "Captured: %s\n", board[to_y][to_x]); 
             return 0;
         }
     }
-
-    return -1;  
+    return -1;
 }
 
-// Function to move a knight piece on the chessboard
+// determine the step direction based on the pawn's color
+int move_pawn_promote(char board[BOARD_SIZE][BOARD_SIZE][3], char color, int from_x, int from_y, int to_x, int to_y, int capture_bool, char promotion_piece) {
+    int step;
+    int promotion_row;
+
+    if (color == 'W') {
+        step = 1;  
+        promotion_row = 7;
+    } else {
+        step = -1;
+        promotion_row = 0;
+    }
+
+    // check if destination pos is at promotion row
+    if (to_y == promotion_row) {
+        if ((from_x == to_x && from_y + step == to_y && !capture_bool && board[to_y][to_x][0] == '*') ||
+            (capture_bool && abs(from_x - to_x) == 1 && from_y + step == to_y && board[to_y][to_x][0] != '*' && board[to_y][to_x][0] != color)) {
+            board[from_y][from_x][0] = '*';
+            board[from_y][from_x][1] = '*';
+            board[from_y][from_x][2] = '\0';
+            board[to_y][to_x][0] = color;
+            board[to_y][to_x][1] = promotion_piece;
+            board[to_y][to_x][2] = '\0';
+
+            if (capture_bool) {
+                printk(KERN_INFO "Captured %s and promoted to %c.\n", board[to_y][to_x], promotion_piece);
+            } else {
+                printk(KERN_INFO "Pawn promoted to %c.\n", promotion_piece);
+            }
+            return 0;
+        } else {
+            printk(KERN_INFO "Move must be forward to an empty square or a diagonal capture.\n");
+            return -1; // invalid move
+        }
+    } else {
+        printk(KERN_INFO "Invalid move pawn did not reach promotion row\n");
+        return -1;
+    }
+}
+
 int move_knight(char board[BOARD_SIZE][BOARD_SIZE][3], char color, int from_x, int from_y, int to_x, int to_y, int capture_bool) {
-    // horizontal and verticl distance
+    // horizontal and vertical distance
     int diagx = abs(to_x - from_x);
     int diagy = abs(to_y - from_y);
 
-    // check if move is attemptyin an L shape
+    // check if move is attempting an L shape
     if ((diagx == 2 && diagy == 1) || (diagx == 1 && diagy == 2)) {
         // check if a move is possible when given move command
-        if( capture_bool){
-            if ( board[to_y][to_x][0] != '*' &&  board[to_y][to_x][0] != color){
+        if (capture_bool) {
+            if (board[to_y][to_x][0] != '*' && board[to_y][to_x][0] != color) {
                 // print capture move
-                printf("Captured: %s\n", board[to_y][to_x]);  
-                strcpy(board[to_y][to_x], board[from_y][from_x]);
-                strcpy(board[from_y][from_x], "**");
+                printk(KERN_INFO "Captured: %s\n", board[to_y][to_x]);  
+                memcpy(board[to_y][to_x], board[from_y][from_x], 3);
+                memset(board[from_y][from_x], '*', 2);
+                board[from_y][from_x][2] = '\0';
                 return 0;
+            } else {
+                // print ill move
+                printk(KERN_INFO "Attempted to capture the same color or no piece to capture, invalid move");
+                return -EINVAL; // -EINVAL typically used for invalid arguments in the kernel
             }
-            else{
-                //print illmove
-                printf("Attempted to capture the same color or no piece to capture, invalid move");
-                return -1;
-
-            }
-        }
-        else {
+        } else {
             if (board[to_y][to_x][0] == '*') {
-                // Perform the move:
-                // Copy the knight from the starting square to the destination square
-                strcpy(board[to_y][to_x], board[from_y][from_x]);
-                // Set the starting square to empty after the move
-                strcpy(board[from_y][from_x], "**");
+                // perform the move:
+                // copy the knight from the starting square to the destination square
+                memcpy(board[to_y][to_x], board[from_y][from_x], 3);
+                // set the starting square to empty after the move
+                memset(board[from_y][from_x], '*', 2);
+                board[from_y][from_x][2] = '\0';
 
-                // Indicate a successful move
+                // indicate a successful move
                 return 0;
             }
         }
     }
 
-    // If the move is not valid or the destination square is not capturable, return -1
-    printf("Attemted to move in incorrect move, must be L shape");
-    return -1;
+    // if the move is not valid or the destination square is not capturable, return -EINVAL
+    printk(KERN_INFO "Attempted to move in incorrect move, must be L shape");
+    return -EINVAL;
 }
-
-
 int move_bishop(char board[BOARD_SIZE][BOARD_SIZE][3], char color, int from_x, int from_y, int to_x, int to_y, int capture_bool) {
-
     int diagx = abs(from_x - to_x);
     int diagy = abs(from_y - to_y);
-    if(diagx == diagy){
-        // must be the same when moving diagnoally
-        int x_steps = 0;
-        if ( to_x > from_x){
-            // moving in the right direction
+
+    if (diagx == diagy) {
+        // must be the same when moving diagonally
+        int x_steps, y_steps;
+        if (to_x > from_x) {
+             // moving in the right direction
             x_steps = 1;
-        }
-        else{
-            // moving left
+        } else {
+            // left
             x_steps = -1;
         }
-        int y_steps = 0;
-        if( to_y > from_y){
-            // moving up 
+        if (to_y > from_y) {
+            // up
             y_steps = 1;
-        }
-        else {
-            // moving down 
+        } else {
+            // down
             y_steps = -1;
         }
+
         // check path of bishop in front of it
         int curr_x = from_x + x_steps;
         int curr_y = from_y + y_steps;
         int tot_steps = diagx;
-        // check all postions except for the last pos, need different case for the last pos
-        for(int i = 1; i < diagx ; i++){
-            if( board[curr_y][curr_x][0] != '*'){
-                printf("Path is blocked when moving the bishop");
-                return -1;
+
+        // check all positions except for the last pos, need different case for the last pos
+        for (int i = 1; i < tot_steps; i++) {
+            if (board[curr_y][curr_x][0] != '*') {
+                printk(KERN_INFO "Path is blocked when moving the bishop\n");
+                return -EINVAL;
             }
             curr_x += x_steps;
-            curr_y+= y_steps;
-
+            curr_y += y_steps;
         }
-        if( capture_bool && board[to_y][to_x][0]!= '*' && board[to_y][to_x][0] != color ){
+
+        if (capture_bool && board[to_y][to_x][0] != '*' && board[to_y][to_x][0] != color) {
             // print captured piece
-            printf("Captured: %s\n", board[to_y][to_x]);
+            printk(KERN_INFO "Captured: %s\n", board[to_y][to_x]);
             // make move
-            strcpy(board[to_y][to_x], board[from_y][from_x]);
-            strcpy(board[from_y][from_x], "**");
+            memcpy(board[to_y][to_x], board[from_y][from_x], 3);
+            memset(board[from_y][from_x], '*', 2);
+            board[from_y][from_x][2] = '\0';
+            return 0;
+        } else if (!capture_bool && board[to_y][to_x][0] == '*') {
+            memcpy(board[to_y][to_x], board[from_y][from_x], 3);
+            memset(board[from_y][from_x], '*', 2);
+            board[from_y][from_x][2] = '\0';
+            return 0;
+        } else {
+            printk(KERN_INFO "Attempting to make incorrect capture with bishop or location is friendly piece\n");
+            return -EINVAL;
+        }
+    } else {
+        // ill move
+        printk(KERN_INFO "Did not move diagonally, ill move\n");
+        return -EINVAL;
+    }
+}
+
+int move_rook(char board[BOARD_SIZE][BOARD_SIZE][3], char color, int from_x, int from_y, int to_x, int to_y, int capture_bool) {
+    // check to see if the move is either horizontal or vertical
+    if (from_x == to_x || from_y == to_y) {
+        // must check if the path is clear or obstructed
+        int x_steps = 0;
+        int y_steps = 0;
+        // check to see if moving horizontally
+        if (from_x != to_x) {
+            if (to_x > from_x) {
+                // moving in the right direction
+                x_steps = 1;
+            } else {
+                // moving left
+                x_steps = -1;
+            }
+        }
+        // check to see if moving vertically
+        if (from_y != to_y) {
+            if (to_y > from_y) {
+                // moving up
+                y_steps = 1;
+            } else {
+                // moving down
+                y_steps = -1;
+            }
+        }
+
+        // check path of rook in front of it
+        int curr_x = from_x + x_steps;
+        int curr_y = from_y + y_steps;
+
+        // iterate up until the pos right before the destination
+        while ((x_steps != 0 && curr_x != to_x) || (y_steps != 0 && curr_y != to_y)) {
+            if (board[curr_y][curr_x][0] != '*') {
+                printk(KERN_INFO "Path is blocked when moving the rook\n");
+                return -EINVAL;
+            }
+            curr_x += x_steps;
+            curr_y += y_steps;
+        }
+
+        // check destination space
+        // check if capture move and check if last move is not same color and is not free
+        if (capture_bool && board[to_y][to_x][0] != '*' && board[to_y][to_x][0] != color) {
+            // print captured piece
+            printk(KERN_INFO "Captured: %s\n", board[to_y][to_x]);
+            // make move
+            memcpy(board[to_y][to_x], board[from_y][from_x], 3);
+            memset(board[from_y][from_x], '*', 2);
+            board[from_y][from_x][2] = '\0';
             return 0;
         }
-        // not a capture move, still need to check if last destination location is * and not a friendlt piece
-        else if (!capture_bool && (board[to_y][to_x][0] == '*' && board[to_y][to_x][0] != color)){
-            strcpy(board[to_y][to_x], board[from_y][from_x]);
-            strcpy(board[from_y][from_x], "**");
+        // make regular move if pos is free and filled with the same color
+        else if (!capture_bool && board[to_y][to_x][0] == '*') {
+            memcpy(board[to_y][to_x], board[from_y][from_x], 3);
+            memset(board[from_y][from_x], '*', 2);
+            board[from_y][from_x][2] = '\0';
             return 0;
-
+        } else {
+            printk(KERN_INFO "Attempted an incorrect capture or wrong rook move\n");
+            return -EINVAL;
         }
-        else{
-            printf("attempting to make incorrect capture with bishsop or location is friendly piece");
-            return -1;
-        }
+    } else {
+        // ill move
+        printk(KERN_INFO "Rook can only move horizontal or vertical\n");
+        return -EINVAL;
     }
-    else{
-        //illmove
-        printf("Did not mot move diagnolly, illmove");
-        return -1;
-    }
+}
 
+
+
+int move_queen(char board[BOARD_SIZE][BOARD_SIZE][3], char color, int from_x, int from_y, int to_x, int to_y, int capture_bool) {
+    // get move distance in x and y direction
+    int distance_x = abs(to_x - from_x);
+    int distance_y = abs(from_y - to_y);
+    int x_steps = 0;
+    int y_steps = 0;
+
+    // move can be diagonal, horizontal or vertical as long its path is clear
+    if (distance_x == distance_y || from_x == to_x || from_y == to_y) {
+        if (to_x > from_x) {
+            // moving right
+            x_steps = 1;
+        } else if (to_x < from_x) {
+            // moving left
+            x_steps = -1;
+        }
+        if (to_y > from_y) {
+            // moving up
+            y_steps = 1;
+        } else if (to_y < from_y) {
+            // moving down
+            y_steps = -1;
+        }
+
+        // check path of queen in front of it
+        int curr_x = from_x + x_steps;
+        int curr_y = from_y + y_steps;
+
+        // iterate up until the position right before the destination
+        while (curr_x != to_x || curr_y != to_y) {
+            if (board[curr_y][curr_x][0] != '*') {
+                printk(KERN_INFO "Path is blocked when moving the queen\n");
+                return -EINVAL;
+            }
+            curr_x += x_steps;
+            curr_y += y_steps;
+        }
+
+        // check destination space
+        // check if capture move and check if last move is not same color and is not free
+        if (capture_bool && board[to_y][to_x][0] != '*' && board[to_y][to_x][0] != color) {
+            // print captured piece
+            printk(KERN_INFO "Captured: %s\n", board[to_y][to_x]);
+            // make move
+            memcpy(board[to_y][to_x], board[from_y][from_x], 3);
+            memset(board[from_y][from_x], '*', 2);
+            board[from_y][from_x][2] = '\0';
+            return 0;
+        }
+        // make regular move if pos is free and filled with the same color
+        else if (!capture_bool && board[to_y][to_x][0] == '*') {
+            memcpy(board[to_y][to_x], board[from_y][from_x], 3);
+            memset(board[from_y][from_x], '*', 2);
+            board[from_y][from_x][2] = '\0';
+            return 0;
+        } else {
+            printk(KERN_INFO "Attempted an incorrect capture move for the queen\n");
+            return -EINVAL;
+        }
+    } else {
+        // ill move
+        printk(KERN_INFO "Made incorrect move for the queen\n");
+        return -EINVAL;
+    }
 }
-int move_rook(char board[BOARD_SIZE][BOARD_SIZE][3], char color, int from_x, int from_y, int to_x, int to_y) {
-    return 0;
+int move_king(char board[BOARD_SIZE][BOARD_SIZE][3], char color, int from_x, int from_y, int to_x, int to_y, int capture_bool) {
+    int distance_x = abs(to_x - from_x);
+    int distance_y = abs(from_y - to_y);
+
+    // checking the distance is at most one space. can only be on space up, one space left or right or one space left or right
+    if (distance_x <= 1 && distance_y <= 1) {
+        if (board[to_y][to_x][0] != color && capture_bool && board[to_y][to_x][0] != '*') {
+            // print captured piece
+            printk(KERN_INFO "Captured: %s\n", board[to_y][to_x]);
+            // make move
+            memcpy(board[to_y][to_x], board[from_y][from_x], 3);
+            memset(board[from_y][from_x], '*', 2);
+            board[from_y][from_x][2] = '\0';
+            return 0;
+        } else if (!capture_bool && board[to_y][to_x][0] == '*') {
+            memcpy(board[to_y][to_x], board[from_y][from_x], 3);
+            memset(board[from_y][from_x], '*', 2);
+            board[from_y][from_x][2] = '\0';
+            return 0;
+        } else {
+            // attempted to move to a piece that is blocked
+            // ill move
+            printk(KERN_INFO "Attempted to move to a block piece or try to capture incorrectly with the king\n");
+            return -EINVAL;
+        }
+    } else {
+        // ill move, incorrect move action
+        printk(KERN_INFO "King can only move one space at a time\n");
+        return -EINVAL;
+    }
 }
-int move_queen(char board[BOARD_SIZE][BOARD_SIZE][3], char color, int from_x, int from_y, int to_x, int to_y) {
-    return 0;
-}
-int move_king(char board[BOARD_SIZE][BOARD_SIZE][3], char color, int from_x, int from_y, int to_x, int to_y) {
-    return 0;
-}
+
 int handle_command(char board[BOARD_SIZE][BOARD_SIZE][3], const char *command) {
-    char color, piece, from_col, to_col, capture;
-    char captured_piece = '\0';
+    char color, piece, from_col, to_col, promotion = '\0', promotion_piece = '\0';
+    char captured_piece_type = '\0', capture = '\0';
     int from_row, to_row;
-    int scanned = sscanf(command, "%c%c%c%d-%c%d%c%c", &color, &piece, &from_col, &from_row, &to_col, &to_row, &capture, &captured_piece);
 
+    // buffer to hold command for manipulation
+    char buf[32];
+    strncpy(buf, command, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0'; // ensure null termination
 
-    // convert column label to 0 based array index ( a = 0, b = 1)
+    int offset = 0;
+    color = buf[offset++];
+    piece = buf[offset++];
+    from_col = buf[offset++];
+    from_row = buf[offset++] - '0';
+    if (buf[offset] == '-') offset++; // skip dash
+    to_col = buf[offset++];
+    to_row = buf[offset++] - '0';
+
+    // check for additional actions for captures or promotions
+    while (buf[offset]) {
+        if (buf[offset] == 'x') { 
+            capture = 'x';
+            captured_piece_type = buf[++offset];
+        } else if (buf[offset] == 'y') { 
+            promotion = 'y';
+            promotion_piece = buf[++offset];
+        }
+        offset++;
+    }
+
+    // convert column label to 0 based array index (a = 0, b = 1)
     int from_x = from_col - 'a';
     int to_x = to_col - 'a';
+
     // convert row numbers (1-8) to array indices (0-7), where 1 maps to 7, 2 to 6
     int from_y = from_row - 1; 
     int to_y = to_row - 1;
 
+    int capture_bool = (capture == 'x');
+    int promotion_bool = (promotion == 'y' && (promotion_piece == 'Q' || promotion_piece == 'R' ||
+                                               promotion_piece == 'B' || promotion_piece == 'N'));
 
-    int capture_bool = 0;
-    if(capture == 'x' && captured_piece != '\0'){
-        capture_bool = 1;
+    printk(KERN_INFO "Parsed move: %c%c from %c%d to %c%d\n", color, piece, from_col, from_row, to_col, to_row);
+    if (capture_bool) {
+        printk(KERN_INFO "Capture indicated with piece type %c\n", captured_piece_type);
     }
-    char upper_piece = toupper(piece);
+    if (promotion_bool) {
+        printk(KERN_INFO "Promotion indicated to %c\n", promotion_piece);
+    }
 
+    char upper_piece = toupper(piece); // convert piece character to upper case
+
+    // Check which piece type and perform corresponding move
     if (upper_piece == 'P') {
         return move_pawn(board, color, from_x, from_y, to_x, to_y, capture_bool);
     } else if (upper_piece == 'N') {
@@ -267,40 +513,67 @@ int handle_command(char board[BOARD_SIZE][BOARD_SIZE][3], const char *command) {
     } else if (upper_piece == 'B') {
         return move_bishop(board, color, from_x, from_y, to_x, to_y, capture_bool);
     } else if (upper_piece == 'R') {
-        return move_rook(board, color, from_x, from_y, to_x, to_y);
+        return move_rook(board, color, from_x, from_y, to_x, to_y, capture_bool);
     } else if (upper_piece == 'Q') {
-        return move_queen(board, color, from_x, from_y, to_x, to_y);
+        return move_queen(board, color, from_x, from_y, to_x, to_y, capture_bool);
     } else if (upper_piece == 'K') {
-        return move_king(board, color, from_x, from_y, to_x, to_y);
+        return move_king(board, color, from_x, from_y, to_x, to_y, capture_bool);
     } else {
-        return -1;  
+        printk(KERN_INFO "Invalid piece type.\n");
+        return -EINVAL; // return an invalid argument error
     }
+
+    return -EINVAL; // if no valid case was executed
 }
+int process_command(ChessGame *game, const char *command) {
 
-
-
-int main() {
-    char board[BOARD_SIZE][BOARD_SIZE][3];
-    char command[20];
-    initialize_board(board);
-    print_board(board);
-
-    // user input loop
-    printf("Enter your move (e.g 'WPe2-e4'): ");
-    while (fgets(command, sizeof(command), stdin)) {
-        if (strcmp(command, "quit\n") == 0) {
-            break;
+    // check if it's a new game command
+    if (strncmp(command, "00 ", 3) == 0) {
+        if (command[3] == 'W' || command[3] == 'B') {
+            initialize_game(game, command[3]);
+            return 0;
         }
-        if (handle_command(board, command) == 0) {
-            print_board(board);
+        printk(KERN_INFO "malformed command\n");
+        return -EINVAL; // malformed command
+    } else if (strcmp(command, "01\n") == 0) {
+        // check if there's a game running to display its state
+        if (game->state != STATE_RUNNING) {
+            printk(KERN_INFO "NOGAME\n");
         } else {
-            printf("Invalid move . Try again.\n");
+            print_board(game->board);
         }
-        printf("Enter your move (or quit): ");
+        return 0;
+    } else if (strncmp(command, "02 ", 3) == 0) {
+        // check game state before making a move
+        if (game->state != STATE_RUNNING) {
+            printk(KERN_INFO "NOGAME\n");
+            return -EINVAL;
+        }
+        // process a move command
+        if (handle_command(game->board, command + 3) == 0) {
+            print_board(game->board);
+        } else {
+            printk(KERN_INFO "ILLMOVE\n");
+        }
+        return 0;
+    } else if (strcmp(command, "03\n") == 0) {
+        // CPU move logic here
+        return -EINVAL;
+    } else if (strcmp(command, "04\n") == 0) {
+        // handle game resignation
+        if (game->state != STATE_RUNNING) {
+            printk(KERN_INFO "NOGAME\n");
+            return -EINVAL;
+        }
+        game->state = STATE_NO_GAME;
+        printk(KERN_INFO "Game resigned. CPU wins.\n");
+        return 0;
     }
-
-    return 0;
+    printk(KERN_INFO "unknown or malformed command\n");
+    return -EINVAL; // unknown or malformed command
 }
+
 
 	
+
 

@@ -12,9 +12,10 @@ int main() {
     int fd;
     char command[256];
     ssize_t bytes;
-    char read_buf[1024]; // Buffer to store read data
+    // to store read data 
+    char read_buf[1024];
     ssize_t num_read;
-    // Open the device file for reading and writing
+    // open the device file for reading and writing
     fd = open(DEVICE_PATH, O_RDWR);
     if (fd < 0) {
         fprintf(stderr, "Failed to open the device '%s': %s\n", DEVICE_PATH, strerror(errno));
@@ -50,7 +51,7 @@ int main() {
             fprintf(stderr, "Failed to write to the device: %s\n", strerror(errno));
         } else {
             printf("Command sent to kernel module.\n");
-             // Read the response from the device
+             // read the response from the device
             memset(read_buf, 0, sizeof(read_buf));
             num_read = read(fd, read_buf, sizeof(read_buf) - 1); // Read data into buffer
             if (num_read > 0) {

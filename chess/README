@@ -1,0 +1,31 @@
+Project Overview
+
+For my Linux Kernel Module (LKM) project, I developed a chess game that integrates directly with the Linux kernel, allowing users to engage with the game through a character device interface. The chess board is structured as an 8x8 grid, where each slot holds detailed information about the chess pieces including color and type, designed for straightforward string manipulation.
+Implementation Details
+
+The project is built around key data structures: the GameState enum to track the game's status (uninitialized, running, or no game), and the ChessGame struct, which manages the game board and tracks the current player's turn. I initially aimed to include a feature for generating CPU moves, though this functionality remains partially implemented. The idea was for the CPU to assess the board, generate possible moves, and select one at random. The board uses array indices ranging from 0 to 7 for rows and columns. White pieces and black pieces move by manipulating the board. By either +1 and increasing the row indices or -1 to decrease the row indices. This setup allows the pieces to advance in their respective directions according to the chess rules.
+
+I implemented detailed movement logic for each type of chess piece, according to their unique rules. This included implementing specific behaviors such as the pawn's initial double space move and promotion. For all pieces, I incorporated checks to ensure the destination slot either was empty or contained an opponent's piece, critical for validating captures. This involved checking the color of the piece in the destination slot against the current player's color to confirm if it's an enemy piece, which is what allows for a making legitimate capture in chess.
+User Interaction 
+
+Players interact with the game through typed commands to start new games, move pieces, resign, or check the game state. These commands are processed by the module, which updates the game accordingly. To provide feedback and assist with debugging, I utilized the kernel’s logging mechanism extensively. By running sudo dmesg, some of the logging can be seen after the program is exited.
+Challenges and Insights
+
+Kernel programming brought its own set of challenges, particularly in how it handles input/output operations differently compared to regular user-space applications. One of the biggest hurdles was fully understanding the chess game, especially when it came to coding the endgame scenarios, like checkmate and stalemate conditions. Initially, I coded the movements for each chess piece individually, but I mistakenly implemented incorrect moves for the pieces. This was detrimental because it skewed my understanding of how the game should run and led to further issues in the process of developing the program. Additionally, I noticed some discrepancies between what the terminal output showed and what the kernel logs I created were showing which led me down the wrong path.  This experience showed me how important it is to have a good grasp of both the game’s rules and the technical aspects of kernel modules when trying to build a reliable system within the Linux environment.
+Running the Module
+
+To run the chess game, the module is loaded into the kernel with sudo insmod chess.ko. Following this, the user interface is compiled with make in the /userspace directory and run using sudo ./userspace. After playing, use dmesg to view kernel logs. Despite its partial accuracy, it shows some of the functionalities of the program which are not reflected in the terminal output. Additionally, to run the userspace prototype, which includes some functionalities that were not fully implemented in the kernel module, use the following commands: compile with gcc chess_proto.c -o chess_proto and then run it using ./chess_proto. The chess_proto.c file is located in the userspace directory.
+Reflections on the Project
+
+Working on this project has been a huge learning curve, especially my understanding of kernel programming. If I were to approach this project again, there are several things I would do differently. Initially, I focused heavily on getting the chess pieces to move correctly, which was crucial, but I realized that I also needed to spend more time understanding kernel module operations and planning out the later phases of the game like endgame scenarios.
+
+Additionally, I would emphasize more thorough testing before moving on to the next steps. Due to time constraints, thorough testing couldnt be done, which led to issues as I neared the completion of the project. Better planning and a more balanced approach to each aspect of the game's development would have likely minimized these issues and improved the overall functionality of the program.
+
+
+Resources 
+https://developer.ibm.com/articles/control-linux-kernel-extensions/
+Project 3 DOcument folder
+https://www.kernel.org/doc/html/v5.0/driver-api/uio-howto.html
+https://www.cs.yale.edu/homes/aspnes/pinewiki/C(2f)Randomization.html
+https://stackoverflow.com/questions/39874/how-do-i-model-a-chessboard-when-programming-a-computer-to-play-chess
+https://embetronicx.com/tutorials/linux/device-drivers/linux-device-driver-tutorial-programming/
